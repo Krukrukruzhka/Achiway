@@ -750,6 +750,38 @@ a {
   font-weight: 300;
 }
 
+.my-templates,
+.template-editor {
+  margin-bottom: 28px;
+}
+
+.template-editor fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.habit-item > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.habit-item .template-target {
+  margin-top: 7px;
+  color: var(--green);
+  text-transform: none;
+}
+
+.template-action {
+  color: var(--green);
+}
+
+.template-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .empty-state {
   padding: 60px 24px;
   color: var(--muted);
@@ -980,6 +1012,11 @@ a {
 
   .habit-list {
     padding: 4px 10px 12px;
+  }
+
+  .habit-item .template-action {
+    grid-column: 2 / -1;
+    justify-self: start;
   }
 }
 

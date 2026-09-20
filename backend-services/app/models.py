@@ -125,6 +125,12 @@ Index("uq_habits_name_lower", func.lower(Habit.name), unique=True)
 class UserHabit(Base):
     __tablename__ = "user_habits"
     __table_args__ = (
+        CheckConstraint(
+            "category IS NULL OR "
+            "(category = btrim(category) AND category = lower(category) AND "
+            "char_length(category) BETWEEN 1 AND 64)",
+            name="ck_user_habits_category",
+        ),
         CheckConstraint("target_value > 0", name="ck_user_habits_target_value"),
         CheckConstraint(
             "target_unit = btrim(target_unit) AND "
@@ -158,6 +164,7 @@ class UserHabit(Base):
             ondelete="RESTRICT",
         )
     )
+    category: Mapped[str | None] = mapped_column(String(64))
     target_value: Mapped[Decimal] = mapped_column(Numeric(12, 3))
     target_unit: Mapped[str] = mapped_column(String(32))
     target_period: Mapped[str] = mapped_column(String(8))

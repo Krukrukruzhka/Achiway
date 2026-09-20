@@ -18,6 +18,26 @@ type Habit = {
   category: string | null;
 };
 
+type TargetPeriod = 'day' | 'week' | 'month';
+
+type UserHabit = {
+  id: string;
+  user_id: string;
+  habit_id: string;
+  category: string | null;
+  target_value: string;
+  target_unit: string;
+  target_period: TargetPeriod;
+  created_at: string;
+  archived_at: string | null;
+};
+
+const periodLabels: Record<TargetPeriod, string> = {
+  day: 'Каждый день',
+  week: 'Каждую неделю',
+  month: 'Каждый месяц',
+};
+
 const pagePaths: Record<Page, string> = {
   home: '/',
   profile: '/profile',
@@ -72,6 +92,14 @@ function getErrorMessage(error: unknown) {
     if (error.message === 'Invalid login or password') return 'Неверный логин или пароль.';
     if (error.message === 'Login already exists') return 'Этот логин уже занят.';
     if (error.message === 'Authentication required') return 'Сессия завершена. Войдите снова.';
+    if (error.message === 'Habit name already exists') return 'Такая привычка уже есть в каталоге.';
+    if (error.message === 'User already has this active habit') {
+      return 'У вас уже есть шаблон этой привычки. Обновите страницу, чтобы изменить его.';
+    }
+    if (error.message === 'Active user habit not found') {
+      return 'Шаблон уже изменён или архивирован. Обновите страницу.';
+    }
+    if (error.status === 422) return 'Проверьте заполненные поля и допустимые значения.';
     if (error.message === 'Too many login attempts. Try again later') {
       return 'Слишком много неудачных попыток. Попробуйте войти через 15 минут.';
     }
@@ -365,8 +393,104 @@ function ProfilePage({ user, onUpdated }: {
   );
 }
 
+function UserHabitForm({ habit, template, onSaved, onCancel }: {
+  habit: Habit;
+  template?: UserHabit;
+  onSaved: (template: UserHabit) => void;
+  onCancel: () => void;
+}) {
+  const [category, setCategory] = useState((template ? template.category : habit.category) ?? '');
+  const [targetValue, setTargetValue] = useState(template?.target_value ?? '');
+  const [targetUnit, setTargetUnit] = useState(template?.target_unit ?? '');
+  const [targetPeriod, setTargetPeriod] = useState<TargetPeriod>(template?.target_period ?? 'day');
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (pending) return;
+    if (!targetUnit.trim()) {
+      setError('Укажите единицу измерения.');
+      return;
+    }
+    setPending(true);
+    setError('');
+    try {
+      const saved = await apiRequest<UserHabit>(
+        template ? `/users/me/habits/${template.id}` : '/users/me/habits',
+        {
+          method: template ? 'PATCH' : 'POST',
+          body: JSON.stringify({
+            ...(!template && { habit_id: habit.id }),
+            category: category.trim() || null,
+            target_value: targetValue,
+            target_unit: targetUnit.trim(),
+            target_period: targetPeriod,
+          }),
+        },
+      );
+      onSaved(saved);
+    } catch (requestError) {
+      setError(getErrorMessage(requestError));
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <form className="form-card template-editor" onSubmit={handleSubmit}
+      aria-labelledby="template-editor-title">
+      <div className="form-card-heading">
+        <h2 id="template-editor-title">{template ? 'Настроить шаблон' : 'Новый шаблон'}: {habit.name}</h2>
+        <p>Задайте свою категорию и цель на выбранный период.</p>
+        {template && <p>При изменении цели история предыдущих результатов сохранится.</p>}
+      </div>
+      <fieldset disabled={pending}>
+        <div className="field-row">
+          <label className="field"><span>Моя категория</span>
+            <input autoFocus value={category} maxLength={64} placeholder="Без категории"
+              onChange={(event) => setCategory(event.target.value)} />
+          </label>
+          <label className="field"><span>Период</span>
+            <select value={targetPeriod}
+              onChange={(event) => setTargetPeriod(event.target.value as TargetPeriod)}>
+              {Object.entries(periodLabels).map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="field-row">
+          <label className="field"><span>Цель</span>
+            <input type="number" required min="0.001" max="999999999.999" step="0.001"
+              value={targetValue} placeholder="Например, 30"
+              onChange={(event) => setTargetValue(event.target.value)} />
+          </label>
+          <label className="field"><span>Единица измерения</span>
+            <input required value={targetUnit} maxLength={32} placeholder="Например, минут"
+              onChange={(event) => setTargetUnit(event.target.value)} />
+          </label>
+        </div>
+        {error && <p className="form-error" role="alert">{error}</p>}
+        <div className="form-actions">
+          <button className="primary-button" type="submit">
+            {pending ? 'Сохраняем…' : 'Сохранить шаблон'}
+          </button>
+          <button className="logout-button" type="button" onClick={onCancel}>Отмена</button>
+        </div>
+      </fieldset>
+    </form>
+  );
+}
+
 function HabitsPage() {
   const [habits, setHabits] = useState<Habit[]>([]);
+  const [templates, setTemplates] = useState<UserHabit[]>([]);
+  const [editing, setEditing] = useState<{ habit: Habit; template?: UserHabit } | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const [reload, setReload] = useState(0);
+  const [saved, setSaved] = useState(false);
   const [newHabit, setNewHabit] = useState('');
   const [query, setQuery] = useState('');
   const [searchFocused, setSearchFocused] = useState(false);
@@ -375,11 +499,29 @@ function HabitsPage() {
 
   useEffect(() => {
     let active = true;
-    apiRequest<Habit[]>('/habits')
-      .then((items) => { if (active) setHabits(items); })
-      .catch((requestError: unknown) => { if (active) setError(getErrorMessage(requestError)); });
+    setLoadError('');
+    Promise.all([apiRequest<Habit[]>('/habits'), apiRequest<UserHabit[]>('/users/me/habits')])
+      .then(([items, userTemplates]) => {
+        if (active) {
+          setHabits(items);
+          setTemplates(userTemplates);
+          setLoaded(true);
+        }
+      })
+      .catch((requestError: unknown) => { if (active) setLoadError(getErrorMessage(requestError)); });
     return () => { active = false; };
-  }, []);
+  }, [reload]);
+
+  const openEditor = (habit: Habit, template?: UserHabit) => {
+    setSaved(false);
+    setEditing({ habit, template });
+  };
+
+  const handleTemplateSaved = (template: UserHabit) => {
+    setTemplates((current) => [template, ...current.filter((item) => item.habit_id !== template.habit_id)]);
+    setEditing(null);
+    setSaved(true);
+  };
 
   const filteredHabits = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase('ru');
@@ -394,6 +536,7 @@ function HabitsPage() {
 
   const handleCreate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (pending || !loaded || editing !== null) return;
     const name = newHabit.trim();
     if (!name) return;
     setPending(true);
@@ -404,6 +547,7 @@ function HabitsPage() {
       });
       setHabits((current) => [created, ...current]);
       setNewHabit('');
+      openEditor(created);
     } catch (requestError) {
       setError(getErrorMessage(requestError));
     } finally {
@@ -415,15 +559,15 @@ function HabitsPage() {
     <main className="page-shell habits-page">
       <section className="page-heading habits-heading">
         <div><p className="eyebrow">Каталог</p><h1>Привычки</h1>
-          <p>Добавляйте новые привычки и находите уже созданные.</p></div>
+          <p>Выбирайте привычки и настраивайте свои цели.</p></div>
 
         <form className="create-habit" onSubmit={handleCreate}>
           <label htmlFor="new-habit">Новая привычка</label>
           <div className="create-habit-row">
             <input id="new-habit" value={newHabit} maxLength={100}
-              placeholder="Например, читать 20 минут"
+              placeholder="Например, чтение"
               onChange={(event) => setNewHabit(event.target.value)} />
-            <button className="primary-button icon-button" type="submit" disabled={pending}
+            <button className="primary-button icon-button" type="submit" disabled={pending || !loaded || editing !== null}
               aria-label="Создать привычку">
               <span aria-hidden="true">+</span><span className="button-label">Добавить</span>
             </button>
@@ -431,6 +575,44 @@ function HabitsPage() {
           {error && <p className="form-error compact-error" role="alert">{error}</p>}
         </form>
       </section>
+
+      {loadError && <div className="form-error" role="alert">
+        <p>{loadError}</p>
+        <button className="logout-button" type="button" onClick={() => setReload((value) => value + 1)}>
+          Повторить загрузку
+        </button>
+      </div>}
+      {!loaded && !loadError && <p role="status">Загружаем привычки и шаблоны…</p>}
+      {saved && <p className="save-status visible" role="status">Шаблон сохранён</p>}
+      {editing && <UserHabitForm key={editing.template?.id ?? editing.habit.id}
+        habit={editing.habit} template={editing.template}
+        onSaved={handleTemplateSaved} onCancel={() => setEditing(null)} />}
+
+      {loaded && <section className="catalog-card my-templates" aria-labelledby="my-templates-title">
+        <div className="catalog-heading">
+          <div><h2 id="my-templates-title">Мои шаблоны</h2><p>Ваши категории, периоды и цели</p></div>
+        </div>
+        <div className="habit-list">
+          {templates.length > 0 ? templates.map((template) => {
+            const habit = habits.find((item) => item.id === template.habit_id);
+            return (
+              <article className="habit-item" key={template.id}>
+                <span className="habit-check" aria-hidden="true">✓</span>
+                <div><h3>{habit?.name ?? 'Привычка'}</h3>
+                  <p>{template.category ?? 'Без категории'}</p>
+                  <p className="template-target">{Number(template.target_value).toLocaleString('ru-RU', {
+                    maximumFractionDigits: 3,
+                  })} {template.target_unit} · {periodLabels[template.target_period]}</p>
+                </div>
+                <button className="logout-button template-action" type="button" disabled={!habit || pending || editing !== null}
+                  aria-label={`Настроить шаблон: ${habit?.name ?? 'Привычка'}`}
+                  onClick={() => { if (habit) openEditor(habit, template); }}>Настроить</button>
+              </article>
+            );
+          }) : <div className="empty-state"><h3>Пока нет шаблонов</h3>
+            <p>Выберите привычку из каталога и задайте свою цель.</p></div>}
+        </div>
+      </section>}
 
       <section className="catalog-card" aria-labelledby="catalog-title">
         <div className="catalog-heading">
@@ -461,12 +643,16 @@ function HabitsPage() {
             <article className="habit-item" key={habit.id}>
               <span className="habit-check" aria-hidden="true">✓</span>
               <div><h3>{habit.name}</h3><p>{habit.category ?? 'без категории'}</p></div>
-              <span className="habit-arrow" aria-hidden="true">›</span>
+              <button className="logout-button template-action" type="button" disabled={!loaded || pending || editing !== null}
+                aria-label={`Настроить: ${habit.name}`}
+                onClick={() => openEditor(habit, templates.find((item) => item.habit_id === habit.id))}>
+                {templates.some((item) => item.habit_id === habit.id) ? 'Настроить' : 'Добавить себе'}
+              </button>
             </article>
-          )) : (
+          )) : loaded ? (
             <div className="empty-state"><span aria-hidden="true">⌕</span>
               <h3>Ничего не найдено</h3><p>Попробуйте изменить запрос или создайте новую привычку.</p></div>
-          )}
+          ) : null}
         </div>
       </section>
     </main>

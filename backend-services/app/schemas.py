@@ -135,9 +135,26 @@ class UserHabitCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     habit_id: UUID
+    category: HabitCategory | None = None
     target_value: TargetValue
     target_unit: TargetUnit
     target_period: TargetPeriod
+
+
+class UserHabitUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    category: HabitCategory | None = None
+    target_value: TargetValue | None = None
+    target_unit: TargetUnit | None = None
+    target_period: TargetPeriod | None = None
+
+    @field_validator("target_value", "target_unit", "target_period")
+    @classmethod
+    def require_target(cls, value: Decimal | str | None) -> Decimal | str:
+        if value is None:
+            raise ValueError("Параметры цели не могут быть null")
+        return value
 
 
 class UserHabitResponse(BaseModel):
@@ -146,6 +163,7 @@ class UserHabitResponse(BaseModel):
     id: UUID
     user_id: UUID
     habit_id: UUID
+    category: str | None
     target_value: Decimal
     target_unit: str
     target_period: TargetPeriod
