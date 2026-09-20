@@ -2,13 +2,22 @@ from dataclasses import dataclass
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.exc import InterfaceError, OperationalError, SQLAlchemyError
 
 from app.database import DatabaseSession, lifespan
+from app.auth import router as auth_router
 from app.habits import router as habits_router
-from app.models import Habit, HabitProgressEntry, User, UserHabit
+from app.models import (
+    AuthSession,
+    Habit,
+    HabitProgressEntry,
+    PasswordCredential,
+    User,
+    UserHabit,
+)
 from app.user_habits import router as user_habits_router
 from app.users import router as users_router
 
@@ -24,6 +33,14 @@ class HealthResponse:
 
 
 app = FastAPI(title="Achiway", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],
+    allow_headers=["Content-Type"],
+)
+app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(habits_router)
 app.include_router(user_habits_router)
@@ -53,7 +70,14 @@ async def liveness() -> HealthResponse:
 @app.get("/health/ready", response_model=HealthResponse, tags=["health"])
 def readiness(session: DatabaseSession) -> HealthResponse:
     try:
-        for model in (User, Habit, UserHabit, HabitProgressEntry):
+        for model in (
+            User,
+            PasswordCredential,
+            AuthSession,
+            Habit,
+            UserHabit,
+            HabitProgressEntry,
+        ):
             session.execute(select(model).limit(0))
     except SQLAlchemyError as exc:
         raise HTTPException(status_code=503, detail="Database or schema unavailable") from exc

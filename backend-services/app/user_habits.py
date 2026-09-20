@@ -6,24 +6,23 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.database import DatabaseSession
+from app.auth import CurrentUser
 from app.habits import constraint_name, find_habit
 from app.models import UserHabit
-from app.schemas import Login, UserHabitCreate, UserHabitResponse
-from app.users import find_user
+from app.schemas import UserHabitCreate, UserHabitResponse
 
 
-router = APIRouter(prefix="/users/{login}/habits", tags=["user habits"])
+router = APIRouter(prefix="/users/me/habits", tags=["user habits"])
 
 
 @router.post(
     "", response_model=UserHabitResponse, status_code=status.HTTP_201_CREATED
 )
 def create_user_habit(
-    login: Login, payload: UserHabitCreate, session: DatabaseSession
+    payload: UserHabitCreate, current_user: CurrentUser, session: DatabaseSession
 ) -> UserHabit:
-    user = find_user(session, login)
     find_habit(session, payload.habit_id)
-    user_habit = UserHabit(user_id=user.id, **payload.model_dump())
+    user_habit = UserHabit(user_id=current_user.id, **payload.model_dump())
     session.add(user_habit)
     try:
         session.commit()
@@ -47,14 +46,13 @@ def create_user_habit(
 
 @router.delete("/{user_habit_id}", status_code=status.HTTP_204_NO_CONTENT)
 def archive_user_habit(
-    login: Login, user_habit_id: UUID, session: DatabaseSession
+    user_habit_id: UUID, current_user: CurrentUser, session: DatabaseSession
 ) -> Response:
-    user = find_user(session, login)
     statement = (
         select(UserHabit)
         .where(
             UserHabit.id == user_habit_id,
-            UserHabit.user_id == user.id,
+            UserHabit.user_id == current_user.id,
             UserHabit.archived_at.is_(None),
         )
         .with_for_update()

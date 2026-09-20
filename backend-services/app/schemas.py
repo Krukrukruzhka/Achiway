@@ -3,7 +3,14 @@ from decimal import Decimal
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    StringConstraints,
+    field_validator,
+)
 
 
 Login = Annotated[
@@ -41,6 +48,7 @@ TargetUnit = Annotated[
     ),
 ]
 TargetPeriod = Literal["day", "week", "month"]
+Password = Annotated[SecretStr, Field(min_length=12, max_length=128)]
 
 
 class UserCreate(BaseModel):
@@ -78,6 +86,17 @@ class UserResponse(BaseModel):
     name: str | None
     gender: Gender | None
     age: int | None
+
+
+class RegistrationRequest(UserCreate):
+    password: Password
+
+
+class LoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    login: Login
+    password: SecretStr = Field(min_length=1, max_length=128)
 
 
 class HabitCreate(BaseModel):

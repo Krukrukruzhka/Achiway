@@ -4,8 +4,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import DatabaseSession
+from app.auth import CurrentUser, clear_session_cookie
 from app.models import User
-from app.schemas import Login, UserCreate, UserResponse, UserUpdate
+from app.schemas import UserResponse, UserUpdate
 
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -32,31 +33,27 @@ def commit_user(session: Session) -> None:
         raise
 
 
-@router.get("/{login}", response_model=UserResponse)
-def get_user(login: Login, session: DatabaseSession) -> User:
-    return find_user(session, login)
+@router.get("/me", response_model=UserResponse)
+def get_user(current_user: CurrentUser) -> User:
+    return current_user
 
 
-@router.post("", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-def create_user(profile: UserCreate, session: DatabaseSession) -> User:
-    user = User(**profile.model_dump())
-    session.add(user)
-    commit_user(session)
-    return user
-
-
-@router.patch("/{login}", response_model=UserResponse)
-def update_user(login: Login, profile: UserUpdate, session: DatabaseSession) -> User:
-    user = find_user(session, login, for_update=True)
+@router.patch("/me", response_model=UserResponse)
+def update_user(
+    profile: UserUpdate, current_user: CurrentUser, session: DatabaseSession
+) -> User:
+    user = find_user(session, current_user.login, for_update=True)
     for field, value in profile.model_dump(exclude_unset=True).items():
         setattr(user, field, value)
     commit_user(session)
     return user
 
 
-@router.delete("/{login}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_user(login: Login, session: DatabaseSession) -> Response:
-    user = find_user(session, login, for_update=True)
+@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+def delete_user(
+    response: Response, current_user: CurrentUser, session: DatabaseSession
+) -> None:
+    user = find_user(session, current_user.login, for_update=True)
     session.delete(user)
     session.commit()
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    clear_session_cookie(response)
