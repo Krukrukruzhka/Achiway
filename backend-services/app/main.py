@@ -7,8 +7,10 @@ from sqlalchemy import select
 from sqlalchemy.exc import InterfaceError, OperationalError, SQLAlchemyError
 
 from app.database import DatabaseSession, lifespan
-from app.models import User
-from app.users import router
+from app.habits import router as habits_router
+from app.models import Habit, HabitProgressEntry, User, UserHabit
+from app.user_habits import router as user_habits_router
+from app.users import router as users_router
 
 
 @dataclass
@@ -22,7 +24,9 @@ class HealthResponse:
 
 
 app = FastAPI(title="Achiway", lifespan=lifespan)
-app.include_router(router)
+app.include_router(users_router)
+app.include_router(habits_router)
+app.include_router(user_habits_router)
 
 
 @app.exception_handler(OperationalError)
@@ -49,7 +53,8 @@ async def liveness() -> HealthResponse:
 @app.get("/health/ready", response_model=HealthResponse, tags=["health"])
 def readiness(session: DatabaseSession) -> HealthResponse:
     try:
-        session.execute(select(User).limit(0))
+        for model in (User, Habit, UserHabit, HabitProgressEntry):
+            session.execute(select(model).limit(0))
     except SQLAlchemyError as exc:
         raise HTTPException(status_code=503, detail="Database or schema unavailable") from exc
     return HealthResponse()
