@@ -20,6 +20,7 @@ from app.models import (
 )
 from app.user_habits import router as user_habits_router
 from app.users import router as users_router
+from app.progress import router as progress_router
 
 
 @dataclass
@@ -44,6 +45,7 @@ app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(habits_router)
 app.include_router(user_habits_router)
+app.include_router(progress_router)
 
 
 @app.exception_handler(OperationalError)

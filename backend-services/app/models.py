@@ -1,10 +1,9 @@
-from datetime import date, datetime
+from datetime import datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
     CheckConstraint,
-    Date,
     DateTime,
     ForeignKey,
     Index,
@@ -172,6 +171,8 @@ class UserHabit(Base):
         DateTime(timezone=True), server_default=func.now()
     )
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    schedule_anchor: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    next_instance_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class HabitProgressEntry(Base):
@@ -199,11 +200,27 @@ class HabitProgressEntry(Base):
             "result_value >= 0", name="ck_habit_progress_entries_result_value"
         ),
         CheckConstraint(
+            "status = 'active' OR "
             "(status = 'done' AND result_value >= target_value) OR "
             "(status = 'tried' AND result_value > 0 AND "
             "result_value < target_value) OR "
             "(status = 'skipped' AND result_value = 0)",
             name="ck_habit_progress_entries_status",
+        ),
+        CheckConstraint(
+            "period_end > period_start", name="ck_habit_progress_entries_period_bounds"
+        ),
+        CheckConstraint(
+            "category IS NULL OR "
+            "(category = btrim(category) AND category = lower(category) AND "
+            "char_length(category) BETWEEN 1 AND 64)",
+            name="ck_habit_progress_entries_category",
+        ),
+        Index(
+            "uq_habit_progress_entries_active",
+            "user_habit_id",
+            unique=True,
+            postgresql_where=text("status = 'active'"),
         ),
     )
 
@@ -215,7 +232,10 @@ class HabitProgressEntry(Base):
             ondelete="CASCADE",
         )
     )
-    period_start: Mapped[date] = mapped_column(Date)
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    habit_name: Mapped[str] = mapped_column(String(100))
+    category: Mapped[str | None] = mapped_column(String(64))
     target_value: Mapped[Decimal] = mapped_column(Numeric(12, 3))
     target_unit: Mapped[str] = mapped_column(String(32))
     target_period: Mapped[str] = mapped_column(String(8))

@@ -8,7 +8,8 @@ from sqlalchemy.exc import IntegrityError
 from app.database import DatabaseSession
 from app.auth import CurrentUser
 from app.habits import constraint_name, find_habit
-from app.models import UserHabit
+from app.habit_instances import sync_template, sync_user
+from app.models import HabitProgressEntry, UserHabit
 from app.schemas import UserHabitCreate, UserHabitResponse, UserHabitUpdate
 
 
@@ -33,13 +34,36 @@ def list_user_habits(
 def create_user_habit(
     payload: UserHabitCreate, current_user: CurrentUser, session: DatabaseSession
 ) -> UserHabit:
+    now = sync_user(session, current_user.id)
     habit = find_habit(session, payload.habit_id)
     values = payload.model_dump()
     if "category" not in payload.model_fields_set:
         values["category"] = habit.category
-    user_habit = UserHabit(user_id=current_user.id, **values)
+    # An archived template's running instance still lasts until its scheduled end.
+    previous = session.execute(
+        select(UserHabit, HabitProgressEntry)
+        .join(HabitProgressEntry, HabitProgressEntry.user_habit_id == UserHabit.id)
+        .where(
+            UserHabit.user_id == current_user.id,
+            UserHabit.habit_id == payload.habit_id,
+            HabitProgressEntry.status == "active",
+        )
+        .order_by(HabitProgressEntry.period_end.desc())
+        .limit(1)
+    ).first()
+    start = previous[1].period_end if previous else now
+    anchor = (
+        previous[0].schedule_anchor
+        if previous and previous[0].target_period == payload.target_period else start
+    )
+    user_habit = UserHabit(
+        user_id=current_user.id, created_at=now,
+        schedule_anchor=anchor, next_instance_at=start, **values
+    )
     session.add(user_habit)
     try:
+        session.flush()
+        sync_template(session, user_habit, now)
         session.commit()
     except IntegrityError as exc:
         session.rollback()
@@ -78,6 +102,8 @@ def update_user_habit(
     if user_habit is None:
         raise HTTPException(status_code=404, detail="Active user habit not found")
 
+    now = datetime.now(timezone.utc)
+    sync_template(session, user_habit, now)
     changes = payload.model_dump(exclude_unset=True)
     target_fields = ("target_value", "target_unit", "target_period")
     if any(
@@ -90,10 +116,16 @@ def update_user_habit(
             for field in ("category", *target_fields)
         }
         values.update(changes)
-        user_habit.archived_at = datetime.now(timezone.utc)
+        start = user_habit.next_instance_at
+        anchor = (
+            user_habit.schedule_anchor
+            if values["target_period"] == user_habit.target_period else start
+        )
+        user_habit.archived_at = now
         session.flush()
         user_habit = UserHabit(
-            user_id=current_user.id, habit_id=user_habit.habit_id, **values
+            user_id=current_user.id, habit_id=user_habit.habit_id,
+            created_at=now, schedule_anchor=anchor, next_instance_at=start, **values
         )
         session.add(user_habit)
     else:
@@ -119,6 +151,8 @@ def archive_user_habit(
     user_habit = session.scalar(statement)
     if user_habit is None:
         raise HTTPException(status_code=404, detail="Active user habit not found")
-    user_habit.archived_at = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc)
+    sync_template(session, user_habit, now)
+    user_habit.archived_at = now
     session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

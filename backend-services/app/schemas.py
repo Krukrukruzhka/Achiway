@@ -169,3 +169,33 @@ class UserHabitResponse(BaseModel):
     target_period: TargetPeriod
     created_at: datetime
     archived_at: datetime | None
+
+
+class HabitInstanceUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    result_value: Annotated[
+        Decimal, Field(ge=0, max_digits=12, decimal_places=3, allow_inf_nan=False)
+    ] = Field(description="Текущий суммарный результат за период, не приращение")
+
+
+class HabitInstanceResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    user_habit_id: UUID
+    habit_name: str
+    category: str | None
+    period_start: datetime
+    period_end: datetime
+    target_value: Decimal
+    target_unit: str
+    target_period: TargetPeriod
+    result_value: Decimal
+    status: Literal["active", "done", "tried", "skipped"]
+
+
+class HabitInstancePage(BaseModel):
+    items: list[HabitInstanceResponse]
+    has_more: bool
+    server_time: datetime

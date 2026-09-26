@@ -1,3 +1,4 @@
+import asyncio
 import os
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
@@ -21,6 +22,8 @@ def database_url() -> URL:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    from app.habit_instances import run_instance_worker
+
     engine = create_engine(
         database_url(),
         pool_pre_ping=True,
@@ -28,10 +31,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         connect_args={"connect_timeout": 5},
     )
     app.state.engine = engine
+    stop = asyncio.Event()
+    worker = asyncio.create_task(run_instance_worker(engine, stop))
     try:
         yield
     finally:
-        engine.dispose()
+        stop.set()
+        try:
+            await worker
+        finally:
+            engine.dispose()
 
 
 def get_session(request: Request) -> Iterator[Session]:
