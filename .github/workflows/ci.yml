@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies from lockfile
+        run: npm ci
+      - name: Check types and build
+        run: npm run build
+
+  backend:
+    name: Backend and migrations
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: achiway_ci
+          POSTGRES_USER: achiway_ci
+          POSTGRES_PASSWORD: ci-only-password
+        ports:
+          - 127.0.0.1:5432:5432
+        options: >-
+          --health-cmd "pg_isready -U achiway_ci -d achiway_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://achiway_ci:ci-only-password@127.0.0.1:5432/achiway_ci
+      SESSION_COOKIE_SECURE: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend-services/requirements.txt
+      - name: Install dependencies
+        run: python -m pip install -r backend-services/requirements.txt
+      - name: Check dependencies and Python syntax
+        run: |
+          python -m pip check
+          python -m compileall -q backend-services db/migrations
+      - name: Apply and check migrations
+        run: |
+          alembic upgrade head
+          alembic check
+      - name: Check API startup and database readiness
+        shell: bash
+        run: |
+          python -m uvicorn app.main:app --app-dir backend-services \
+            --host 127.0.0.1 --port 8000 > "$RUNNER_TEMP/achiway-api.log" 2>&1 &
+          api_pid=$!
+          trap 'kill "$api_pid" 2>/dev/null || true; wait "$api_pid" 2>/dev/null || true; cat "$RUNNER_TEMP/achiway-api.log"' EXIT
+          curl --fail --silent --show-error --retry 15 --retry-connrefused \
+            --retry-delay 1 --retry-max-time 45 --max-time 3 \
+            http://127.0.0.1:8000/health/ready -o "$RUNNER_TEMP/achiway-ready.json"
+          jq -e '.status == "ok"' "$RUNNER_TEMP/achiway-ready.json"
+          for endpoint in live startup; do
+            curl --fail --silent --show-error --max-time 3 \
+              "http://127.0.0.1:8000/health/$endpoint" | jq -e '.status == "ok"'
+          done

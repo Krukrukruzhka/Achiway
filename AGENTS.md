@@ -102,7 +102,7 @@ Achiway — приложение для постановки личных цел
    ```
 
 5. В том же терминале запустить API: `.venv/bin/python -m uvicorn app.main:app --app-dir backend-services --host 127.0.0.1 --port 8000`.
-6. Запустить frontend на `http://127.0.0.1:5173` привычной для локального окружения командой. При работе на порту `5173` frontend обращается к FastAPI на том же hostname и порту `8000`, передавая session cookie. Backend разрешает credentialed CORS только для `http://127.0.0.1:5173` и `http://localhost:5173`.
+6. Для frontend использовать Node.js 22 (не ниже 22.12; основная версия указана в `.nvmrc`). Установить зависимости командой `npm --prefix frontend ci`, затем запустить `npm --prefix frontend run dev`. Vite открывает `http://127.0.0.1:5173`; если порт занят, завершает запуск с ошибкой, не выбирая другой порт. При работе на порту `5173` frontend обращается к FastAPI на том же hostname и порту `8000`, передавая session cookie. Backend разрешает credentialed CORS только для `http://127.0.0.1:5173` и `http://localhost:5173`.
 7. OpenAPI UI: `http://127.0.0.1:8000/docs`; готовность: `curl -fsS http://127.0.0.1:8000/health/ready`.
 
 Пример тела `POST /auth/register`: `{"login": "demo_user", "password": "replace-with-strong-password", "name": "Пример", "gender": "other", "age": 25}`. Для очистки имени: `PATCH /users/me` с телом `{"name": null}`.
@@ -110,7 +110,18 @@ Achiway — приложение для постановки личных цел
 Пример тела `POST /users/me/habits`: `{"habit_id": "00000000-0000-0000-0000-000000000000", "category": "Самообразование", "target_value": 30, "target_unit": "минут", "target_period": "day"}`.
 Пример тела `PATCH /users/me/habits/{user_habit_id}`: `{"target_value": 150, "target_period": "week"}`. Для очистки личной категории: `{"category": null}`.
 
-Проверки: `.venv/bin/python -m pip check`, `.venv/bin/python -m compileall -q backend-services db/migrations`, `.venv/bin/alembic current`, `.venv/bin/alembic check` (последние две требуют экспортированного `DATABASE_URL` и запущенной БД). Тестов и настроенного линтера пока нет.
+Проверки backend: `.venv/bin/python -m pip check`, `.venv/bin/python -m compileall -q backend-services db/migrations`, `.venv/bin/alembic current`, `.venv/bin/alembic check` (последние две требуют экспортированного `DATABASE_URL` и запущенной БД). Проверки frontend: `npm --prefix frontend run typecheck`; `npm --prefix frontend run build` повторно проверяет типы и собирает приложение в `frontend/dist/`. Файлов тестов и настроенного линтера приложения пока нет.
+
+## CI
+
+- `.github/workflows/ci.yml` запускает GitHub Actions при pull request в `main`, push в `main` и вручную через `workflow_dispatch`. Независимые задания выполняются на `ubuntu-24.04`, имеют таймаут 10 минут; новый запуск отменяет предыдущий CI той же ветки.
+- Frontend: Node.js 22 из `.nvmrc`, `npm ci` и `npm run build` в `frontend/`. `package-lock.json` фиксирует дерево зависимостей; `frontend/.npmrc` указывает публичный `https://registry.npmjs.org/`, чтобы сборка не зависела от корпоративного registry на компьютере разработчика. Для импорта CSS подключены типы `vite/client`.
+- Backend: Python 3.13, установка `backend-services/requirements.txt`, `pip check`, `compileall`, `alembic upgrade head` и `alembic check`. PostgreSQL 17 создаётся как одноразовый service-контейнер с отдельной БД `achiway_ci`; пароль в workflow используется только для этой временной БД и не является production-секретом.
+- После миграций CI запускает API и проверяет `/health/ready`, `/health/live` и `/health/startup`; процесс останавливается при завершении шага, его журнал попадает в вывод задания.
+- Workflow имеет только `contents: read`, checkout не сохраняет credentials; официальные Actions закреплены по SHA. Серверные ключи и production-БД в CI не используются. В GitHub Actions service-контейнер работает через Docker; локально сохраняется правило использования алиаса `docker` на Podman.
+- Этот этап добавляет проверки исходного кода и миграций. Сборка production-образов, публикация в GHCR и ручной деплой на сервер добавляются следующим шагом.
+
+## Миграции и остановка БД
 
 Для следующего изменения схемы: изменить модель, выполнить `.venv/bin/alembic revision --autogenerate -m "описание"`, проверить сгенерированную миграцию и применить её через `upgrade head`.
 Для остановки БД без удаления данных: `docker compose stop db`. Не удалять том и не выполнять downgrade без согласования: первая обратная миграция удаляет таблицу профилей.
