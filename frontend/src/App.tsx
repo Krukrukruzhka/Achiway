@@ -48,9 +48,9 @@ const pagePaths: Record<Page, string> = {
   register: '/register',
 };
 
-const apiOrigin = window.location.port === '5173'
-  ? `${window.location.protocol}//${window.location.hostname}:8000`
-  : window.location.origin;
+const apiBase = import.meta.env.DEV
+  ? `${window.location.protocol}//${window.location.hostname}:8000/`
+  : `${window.location.origin}/api/`;
 
 class ApiError extends Error {
   status: number;
@@ -62,7 +62,7 @@ class ApiError extends Error {
 }
 
 async function apiRequest<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(new URL(path, apiOrigin), {
+  const response = await fetch(new URL(path.replace(/^\//, ''), apiBase), {
     ...options,
     credentials: 'include',
     headers: options?.body
