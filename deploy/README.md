@@ -25,40 +25,42 @@ digest, поэтому изменение тега не подменяет вы�
 
 ## 2. Подготовить сервер административным доступом
 
-Передать проверенный каталог `deploy/` на сервер из локального корня проекта:
+Репозиторий уже клонирован на сервере в
+`/home/krukrukruzhka-m/github_projects/Achiway`. Использовать Compose и сценарий
+деплоя прямо из этого клона: копирование через `scp` и установка сценариев в
+`/usr/local` не нужны. Администратор обновляет клон после проверки изменений
+в `deploy/`; GitHub Actions меняет только образы и не выполняет `git pull`.
 
 ```sh
-ssh me 'mkdir -p ~/achiway-deploy-setup'
-scp deploy/* me:achiway-deploy-setup/
 ssh me
-cd ~/achiway-deploy-setup
-sudo ss -ltnp
+cd /home/krukrukruzhka-m/github_projects/Achiway
 ```
 
-Далее команды выполняются в этом каталоге на сервере. При занятом `8020` сначала
+Далее команды выполняются на сервере из корня клона. При занятом `8020` сначала
 выяснить владельца порта; не останавливать чужой сервис. Порт 80 для Achiway
 не используется, работающий на нём nginx не мешает запуску.
 
+В `/opt/achiway` хранятся только секреты, резервные копии и состояние деплоя.
+Создать каталог и пароль БД через shell и OpenSSL, без Python; при повторном
+запуске существующий пароль сохраняется:
+
 ```sh
-sudo install -d -o root -g root -m 755 /opt/achiway
-sudo install -d -o root -g root -m 700 /opt/achiway/backups
-sudo install -o root -g root -m 600 compose.yaml /opt/achiway/compose.yaml
-sudo install -o root -g root -m 755 achiway-deploy.py /usr/local/sbin/achiway-deploy
-sudo install -o root -g root -m 755 achiway-ssh /usr/local/bin/achiway-ssh
-sudo python3 - <<'PY'
-import os
-from pathlib import Path
-import secrets
-os.umask(0o077)
-path = Path('/opt/achiway/secrets.env')
-if path.exists():
-    print('Existing secrets.env preserved')
-else:
-    with path.open('x') as output:
-        output.write('POSTGRES_PASSWORD=' + secrets.token_hex(32) + '\n')
-    print('Created secrets.env without printing its contents')
-PY
+sudo mkdir -p /opt/achiway
+sudo chmod 700 /opt/achiway
+sudo sh -eu <<'SH'
+umask 077
+if [ -e /opt/achiway/secrets.env ]; then
+    echo 'Пароль уже настроен, оставляем его.'
+else
+    db_password=$(openssl rand -hex 32)
+    (set -C; printf 'POSTGRES_PASSWORD=%s\n' "$db_password" > /opt/achiway/secrets.env)
+    echo 'Пароль создан и сохранён.'
+fi
+SH
 ```
+
+Каталог `backups` создаёт сценарий при первом деплое. Содержимое `secrets.env`
+не выводить в терминал и не переносить в репозиторий.
 
 Пароль используется в URL подключения, поэтому генерация использует hex-символы.
 Не заменять пароль в существующем томе через редактирование этого файла:
@@ -103,10 +105,10 @@ sudo ss -ltnp '( sport = :8020 )'
 
 ```sh
 ssh-keygen -t ed25519 -f ~/.ssh/achiway_github -C achiway-github-actions -N ''
-scp ~/.ssh/achiway_github.pub me:achiway-deploy-setup/deploy-key.pub
+scp ~/.ssh/achiway_github.pub me:achiway-deploy-key.pub
 ```
 
-На сервере, в `~/achiway-deploy-setup`:
+На сервере, в `/home/krukrukruzhka-m/github_projects/Achiway`:
 
 ```sh
 sudo useradd --system --create-home --home-dir /var/lib/achiway-deploy --shell /bin/sh achiway-deploy
@@ -115,21 +117,30 @@ sudo chmod 755 /var/lib/achiway-deploy
 sudo install -d -o root -g root -m 755 /var/lib/achiway-deploy/.ssh
 sudo python3 - <<'PY'
 from pathlib import Path
-public_key = Path('deploy-key.pub').read_text().strip()
+public_key = Path('/home/krukrukruzhka-m/achiway-deploy-key.pub').read_text().strip()
 if not public_key.startswith('ssh-ed25519 ') or '\n' in public_key:
     raise SystemExit('Expected one Ed25519 public key')
 path = Path('/var/lib/achiway-deploy/.ssh/authorized_keys')
 with path.open('x') as output:
-    output.write('restrict,command="/usr/local/bin/achiway-ssh" ' + public_key + '\n')
+    command = ('/usr/bin/sudo -n /usr/bin/python3 -I '
+               '/home/krukrukruzhka-m/github_projects/Achiway/deploy/achiway-deploy.py '
+               '"${SSH_ORIGINAL_COMMAND:-}"')
+    escaped_command = command.replace('"', '\\"')
+    output.write('restrict,command="' + escaped_command + '" ' + public_key + '\n')
 path.chmod(0o644)
 PY
-sudo visudo -cf achiway.sudoers
-sudo install -o root -g root -m 440 achiway.sudoers /etc/sudoers.d/achiway
+sudo visudo -cf deploy/achiway.sudoers
+sudo install -o root -g root -m 440 deploy/achiway.sudoers /etc/sudoers.d/achiway
 sudo visudo -c
 ```
 
-Этот пользователь не входит в группу `docker`. Его домашний каталог, ключи,
-Compose, сценарий обновления и sudoers доступны для записи только root.
+Этот пользователь не входит в группы `docker` и `krukrukruzhka-m`. Его домашний
+каталог, ключи, sudoers и `/opt/achiway` доступны для записи только root. Клон,
+Compose и сценарий обновления изменяет только доверенный администратор с sudo;
+пользователю `achiway-deploy` нельзя давать права записи в клон или его родительские
+каталоги. Закрытый домашний каталог администратора открывать не нужно: forced
+command запускает конкретный сценарий через sudo и `/usr/bin/python3 -I`.
+Путь клона закреплён в sudoers и forced command; при переносе нужно изменить оба.
 Сценарий принимает исключительно `deploy sha256:<64 hex> sha256:<64 hex>` и
 скачивает образы из двух фиксированных репозиториев GHCR. Нет произвольного shell,
 SFTP, туннелей, доступа к Docker socket или возможности заменить серверный Compose.
@@ -190,6 +201,7 @@ HTTP-адрес `/api/health/ready`.
 - Не выполнять `docker compose down --volumes` для production и не очищать
   глобальный Docker cache: на сервере есть другие приложения.
 
-Изменения Compose и привилегированного сценария устанавливает администратор
-после проверки, отдельно от обновления образов через GitHub. Конфигурация nginx
+Compose и привилегированный сценарий выполняются непосредственно из серверного
+клона. Их изменения проверяет администратор перед обновлением клона, отдельно от
+обновления образов через GitHub. Конфигурация nginx
 входит в образ frontend и обновляется вместе с ним.

@@ -1,5 +1,5 @@
 #!/usr/bin/python3 -I
-"""Root-owned deployment entrypoint; accepts only two Achiway image digests."""
+"""Admin-managed deployment entrypoint; accepts only two Achiway image digests."""
 
 import fcntl
 import json
@@ -13,6 +13,7 @@ from urllib.request import urlopen
 
 
 ROOT = Path('/opt/achiway')
+COMPOSE_FILE = Path(__file__).resolve().with_name('compose.yaml')
 MAINTENANCE = ROOT / 'maintenance'
 DIGEST = r'sha256:[a-f0-9]{64}'
 
@@ -23,7 +24,7 @@ def deploy(command: str) -> None:
         raise ValueError('Only deploy <backend digest> <frontend digest> is allowed')
     candidate = dict(zip(('backend', 'frontend'), match.groups()))
     if os.geteuid() != 0:
-        raise PermissionError('This entrypoint must be installed and run by root')
+        raise PermissionError('This entrypoint must be run by root')
     os.umask(0o077)
     os.chdir(ROOT)
     with (ROOT / 'deploy.lock').open('a') as lock:
@@ -49,7 +50,7 @@ def update(candidate: dict[str, str]) -> None:
     def compose(*arguments: str, **kwargs) -> subprocess.CompletedProcess:
         return subprocess.run(
             ['/usr/bin/docker', 'compose', '--project-name', 'achiway',
-             '--env-file', str(ROOT / 'secrets.env'), '-f', str(ROOT / 'compose.yaml'),
+             '--env-file', str(ROOT / 'secrets.env'), '-f', str(COMPOSE_FILE),
              *arguments], env=environment, check=True, **kwargs,
         )
 
