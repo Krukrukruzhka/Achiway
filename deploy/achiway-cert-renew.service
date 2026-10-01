@@ -1,8 +1,0 @@
-[Unit]
-Description=Renew the Achiway IP certificate
-After=network-online.target nginx.service
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-ExecStart=/snap/bin/certbot renew --cert-name 37.230.168.87 --quiet

@@ -33,7 +33,10 @@ def deploy(command: str) -> None:
 
 def update(candidate: dict[str, str]) -> None:
     # Do not inherit SSH-controlled Docker/Compose/Python configuration.
-    environment = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'HOME': '/root', 'HTTP_PORT': '18080'}
+    environment = {
+        'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'HOME': '/root',
+        'HTTP_BIND_HOST': '0.0.0.0', 'HTTP_PORT': '8020',
+    }
 
     def select_images(images: dict[str, str]) -> None:
         for service in ('backend', 'frontend'):
@@ -60,7 +63,7 @@ def update(candidate: dict[str, str]) -> None:
         return query('SELECT version_num FROM alembic_version ORDER BY version_num')
 
     def ready() -> None:
-        with urlopen('http://127.0.0.1:18080/api/health/ready', timeout=10) as response:
+        with urlopen('http://127.0.0.1:8020/api/health/ready', timeout=10) as response:
             if response.status != 200 or json.load(response).get('status') != 'ok':
                 raise RuntimeError('Application readiness check failed')
 
@@ -85,8 +88,8 @@ def update(candidate: dict[str, str]) -> None:
     pending_backup = backups / f'{stamp}.partial'
     migration_started = False
     migration_finished = False
-    MAINTENANCE.touch(mode=0o644)
-    # umask is deliberately restrictive for secrets; nginx must be able to stat this file.
+    # Blocks another deployment after an unsafe failure; no external maintenance page.
+    MAINTENANCE.touch(mode=0o600)
     try:
         compose('stop', 'frontend', 'backend', timeout=90)
         with pending_backup.open('xb') as output:
@@ -111,10 +114,10 @@ def update(candidate: dict[str, str]) -> None:
         pending_backup.unlink(missing_ok=True)
         print('Deployment failed. Checking whether application rollback is safe.', flush=True)
         try:
+            compose('stop', 'frontend', 'backend', timeout=90)
             safe = not migration_started or (migration_finished and revision() == before)
             if previous and safe:
                 select_images(previous)
-                compose('stop', 'frontend', 'backend', timeout=90)
                 compose('up', '-d', '--wait', '--wait-timeout', '90', 'backend', 'frontend', timeout=150)
                 ready()
                 MAINTENANCE.unlink()

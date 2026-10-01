@@ -36,6 +36,8 @@ jobs:
       FRONTEND_IMAGE: ghcr.io/krukrukruzhka/achiway-frontend:${{ github.sha }}
       POSTGRES_PASSWORD: ci-only-password
       COMPOSE_PROJECT_NAME: achiway-image-check
+      HTTP_BIND_HOST: 127.0.0.1
+      HTTP_PORT: "18080"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -94,7 +96,7 @@ jobs:
     timeout-minutes: 15
     environment:
       name: production
-      url: https://37.230.168.87
+      url: http://37.230.168.87:8020
     env:
       DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
       DEPLOY_PORT: ${{ vars.DEPLOY_PORT }}
@@ -121,7 +123,7 @@ jobs:
             -o UserKnownHostsFile="$hosts_file" -o ConnectTimeout=15 \
             -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
             "achiway-deploy@$DEPLOY_HOST" "deploy $BACKEND_DIGEST $FRONTEND_DIGEST"
-      - name: Verify public HTTPS endpoint
+      - name: Verify public HTTP endpoint
         run: |
           curl --fail --silent --show-error --retry 5 --retry-delay 2 --max-time 10 \
-            "https://$DEPLOY_HOST/api/health/ready" | jq -e '.status == "ok"'
+            "http://$DEPLOY_HOST:8020/api/health/ready" | jq -e '.status == "ok"'
